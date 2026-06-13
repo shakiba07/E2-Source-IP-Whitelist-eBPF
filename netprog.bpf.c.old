@@ -48,7 +48,7 @@ struct hdr_cursor {
 	void *pos;
 };
 
-//SEC("xdp")
+SEC("xdp")
 int  xdp_prog_pass(struct xdp_md *ctx)
 {
 	return XDP_PASS;

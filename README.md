@@ -1,200 +1,284 @@
-# E2 — Source IP Whitelist (eBPF)
+# E2 – Source IP Whitelist using eBPF/XDP
 
 ## Overview
 
-This project implements a simple **eBPF-based Source IP Whitelist** using XDP.
+This project implements an IPv6 Source IP Whitelist using eBPF and XDP. The objective is to allow packets only from approved IPv6 source addresses and drop packets coming from addresses that are not present in a whitelist.
 
-The goal is to filter incoming packets at kernel level and allow only packets coming from trusted source IP addresses. Packets originating from non-whitelisted addresses are dropped before reaching the networking stack.
+The whitelist is stored inside a BPF map and is dynamically populated from user space using **bpftool**, allowing the list of authorized addresses to be modified without recompiling the eBPF program.
 
-The implementation demonstrates how eBPF can be used for efficient packet filtering and access control directly inside the Linux kernel.
-
----
-
-## Project Objectives
-
-* Create an eBPF/XDP program.
-* Load the program into the Linux kernel.
-* Attach the program to a network interface.
-* Maintain a whitelist of allowed source IP addresses.
-* Drop packets coming from non-whitelisted sources.
-* Verify successful loading and attachment using bpftool.
+The project demonstrates practical usage of XDP packet processing, BPF maps, IPv6 header parsing, and user-space interaction with eBPF programs.
 
 ---
 
-## Environment
+# Objectives
 
-### Operating System
+The main goals of this project are:
 
-* Ubuntu Linux (VirtualBox)
-
-### Technologies
-
-* eBPF
-* XDP (Express Data Path)
-* bpftool
-* Docker
-* Containerlab
-* Linux Networking
+* Implement packet filtering using XDP.
+* Parse Ethernet and IPv6 headers.
+* Maintain a whitelist of allowed IPv6 source addresses.
+* Load whitelist entries dynamically from user space.
+* Drop packets originating from non-whitelisted addresses.
+* Verify correct functionality through network tests.
 
 ---
 
-## Topology
+# Architecture
 
-Two Containerlab nodes were deployed:
+The solution consists of two main components:
 
-* clab-basic-lab-node1
-* clab-basic-lab-node2
+## Kernel Space
 
-The eBPF program was attached to the network interface of **node1**.
+An XDP eBPF program is attached to the network interface.
+
+The program:
+
+1. Receives packets at the XDP hook.
+2. Parses the Ethernet header.
+3. Checks whether the packet contains IPv6 traffic.
+4. Extracts the source IPv6 address.
+5. Looks up the address inside a BPF whitelist map.
+6. Returns:
+
+   * `XDP_PASS` if the address exists in the whitelist.
+   * `XDP_DROP` otherwise.
+
+## User Space
+
+The whitelist is managed through `bpftool`.
+
+User-space operations include:
+
+* Creating and pinning BPF maps.
+* Inserting IPv6 addresses into the whitelist.
+* Inspecting map contents.
+* Verifying correct program attachment.
 
 ---
 
-## Implementation
+# BPF Map Design
 
-The XDP program was compiled into an eBPF object file:
+The whitelist is implemented using a hash map.
 
-```bash
-netprog.bpf.c
+## Map Type
+
+```c
+BPF_MAP_TYPE_HASH
 ```
 
-Compilation generated:
+## Key
 
-```bash
-netprog.bpf.o
+IPv6 source address (`struct in6_addr`)
+
+## Value
+
+```c
+u8 allowed = 1;
 ```
 
-The object was then loaded using bpftool and pinned inside:
+A value of `1` indicates that the source IPv6 address is authorized.
+
+---
+
+# Packet Processing Logic
+
+The packet processing workflow is shown below:
 
 ```text
-/sys/fs/bpf/netprog
+Incoming Packet
+       |
+       v
+Parse Ethernet Header
+       |
+       v
+Is IPv6?
+       |
+   Yes v
+Parse IPv6 Header
+       |
+       v
+Extract Source Address
+       |
+       v
+Lookup in Whitelist Map
+       |
+   +---+---+
+   |       |
+Found    Not Found
+   |       |
+   v       v
+XDP_PASS XDP_DROP
 ```
-
-Finally, the program was attached to the target interface.
 
 ---
 
-## Verification
+# Compilation
 
-The following command was used to verify the attachment:
+The program is compiled using Clang and the Linux eBPF toolchain.
 
 ```bash
-bpftool net
+make
 ```
 
-Output:
-
-```text
-xdp:
-eth1(25) generic id 142
-```
-
-This confirms that the eBPF/XDP program was successfully attached to the network interface.
+Compilation generates the eBPF object file that can be loaded into the kernel.
 
 ---
 
-## Issues Encountered
+# Loading the Program
 
-### Issue 1: bpftool not found inside the container
+The compiled XDP program is attached to the target network interface.
 
-Error:
-
-```text
-bash: bpftool: command not found
-```
-
-Reason:
-
-The container image did not include bpftool.
-
-Solution:
-
-bpftool was executed from the host namespace using:
+Verification:
 
 ```bash
-nsenter
+sudo bpftool net
 ```
+
+Expected output confirms that an XDP program is attached to the interface.
 
 ---
 
-### Issue 2: Existing pinned BPF object
+# Populating the Whitelist
 
-Error:
+Whitelist entries are inserted from user space using `bpftool`.
+
+Example allowed addresses:
 
 ```text
-path '/sys/fs/bpf/netprog' already exists
+3fff:172:20:20::3
+3fff:172:20:20::6
 ```
 
-Reason:
-
-A previously pinned eBPF object already existed.
-
-Solution:
+Map contents can be verified using:
 
 ```bash
-sudo rm /sys/fs/bpf/netprog
+sudo bpftool map dump id <MAP_ID>
 ```
 
-The program was then reloaded successfully.
+Successful output shows both IPv6 addresses stored inside the whitelist map.
 
 ---
 
-### Issue 3: XDP attachment failed because of MTU mismatch
+# Experimental Validation
 
-Error:
+## Test 1 – Whitelisted Address
+
+Command:
+
+```bash
+docker exec clab-basic-lab-node1 ping6 3fff:172:20:20::3 -c 4
+```
+
+Result:
 
 ```text
-Peer MTU is too large to set XDP
+4 packets transmitted
+4 packets received
+0% packet loss
 ```
 
-Reason:
+### Observation
 
-The virtual Ethernet pair used by Containerlab had incompatible MTU settings.
+The source address exists in the whitelist map.
 
-Solution:
+The eBPF program returns:
 
-The interface MTU was adjusted and the program was attached using Generic XDP mode:
+```c
+XDP_PASS
+```
+
+The packet successfully reaches its destination.
+
+---
+
+## Test 2 – Second Whitelisted Address
+
+Command:
 
 ```bash
-bpftool net attach xdpgeneric
+docker exec clab-basic-lab-node1 ping6 3fff:172:20:20::6 -c 4
 ```
 
+Result:
+
+```text
+4 packets transmitted
+4 packets received
+0% packet loss
+```
+
+### Observation
+
+The address is present in the whitelist.
+
+Traffic is accepted and forwarded normally.
+
 ---
 
-## Results
+## Test 3 – Non-Whitelisted Address
 
-The eBPF program was successfully:
+Command:
 
-* Compiled
-* Loaded into the kernel
-* Pinned in BPF filesystem
-* Attached to the target interface
-* Verified using bpftool
+```bash
+docker exec clab-basic-lab-node1 ping6 3fff:172:20:20::99 -c 4
+```
 
-The final output confirmed that XDP was active on the interface.
+Result:
+
+```text
+Destination unreachable
+100% packet loss
+```
+
+### Observation
+
+The address is not present in the whitelist map.
+
+The eBPF program returns:
+
+```c
+XDP_DROP
+```
+
+The packet is discarded at the XDP layer before entering the normal kernel networking stack.
 
 ---
 
-## Learning Outcomes
+# Verification of Intermediate Requirement
+
+The project satisfies the Intermediate requirement because:
+
+* The whitelist is not hardcoded.
+* IPv6 addresses are loaded dynamically from user space.
+* `bpftool` is used to insert entries into the BPF map.
+* Map contents can be modified without recompiling the program.
+* Packet filtering decisions are performed using map lookups.
+
+---
+
+# Learning Outcomes
 
 Through this project, the following concepts were explored:
 
 * eBPF architecture
 * XDP packet processing
-* Linux network namespaces
-* Containerlab networking
+* Linux networking internals
+* IPv6 packet parsing
+* BPF hash maps
 * bpftool usage
-* Loading and attaching BPF programs
-* Troubleshooting kernel networking issues
+* User-space and kernel-space interaction
+* Dynamic access control using eBPF
+* Network troubleshooting and debugging
 
 ---
 
+# Conclusion
 
+This project successfully implements an IPv6 Source IP Whitelist using eBPF and XDP.
 
-## Conclusion
+The solution performs packet filtering directly at the XDP layer, providing efficient and early packet processing inside the Linux kernel. Whitelist entries are managed dynamically from user space through bpftool, making the system flexible and easy to maintain.
 
-This project demonstrates a practical use of eBPF and XDP for implementing a Source IP Whitelist mechanism.
+Experimental results confirm that packets originating from whitelisted IPv6 addresses are accepted, while packets from non-whitelisted addresses are dropped successfully.
 
-By performing packet filtering directly inside the Linux kernel, eBPF provides a highly efficient and scalable solution for network access control while minimizing processing overhead.
-
-The project successfully demonstrated the compilation, loading, pinning, and attachment of an XDP program, as well as troubleshooting and resolving common deployment issues encountered during development.
+The implementation fully satisfies the Basic and Intermediate requirements of the assignment and demonstrates a practical application of eBPF-based packet filtering.
 
