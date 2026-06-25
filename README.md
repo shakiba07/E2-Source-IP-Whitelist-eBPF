@@ -59,7 +59,9 @@ User-space operations include:
 # BPF Map Design
 
 The whitelist is implemented using a hash map.
+### Whitelist Map Definition
 
+![Whitelist Map Definition](04-whitelist-map.png)
 ## Map Type
 
 ```c
@@ -77,7 +79,9 @@ u8 allowed = 1;
 ```
 
 A value of `1` indicates that the source IPv6 address is authorized.
+### Whitelist Decision Logic
 
+![Whitelist Decision Logic](05-whitelist-decision.png)
 ---
 
 # Packet Processing Logic
@@ -109,7 +113,9 @@ Found    Not Found
    v       v
 XDP_PASS XDP_DROP
 ```
+### Packet Processing Workflow
 
+![Packet Processing Workflow](01-whitelist-map.png)
 ---
 
 # Compilation
@@ -135,7 +141,17 @@ sudo bpftool net
 ```
 
 Expected output confirms that an XDP program is attached to the interface.
+### XDP Program Attached to eth0
 
+![XDP Attached](06-xdp-attached-eth0.png)
+
+### Interface IPv6 and XDP Status
+
+![Interface IPv6 and XDP](07-interface-ipv6-xdp.png)
+
+### Pinned eBPF Objects
+
+![Pinned eBPF Objects](08-bpffs-pinned-objects.png)
 ---
 
 # Populating the Whitelist
@@ -154,9 +170,13 @@ Map contents can be verified using:
 ```bash
 sudo bpftool map dump id <MAP_ID>
 ```
+### Whitelist Map Dump
 
+![Whitelist Map Dump](09-whitelist-map-dump.png)
 Successful output shows both IPv6 addresses stored inside the whitelist map.
+### Whitelist Map with Two Entries
 
+![Whitelist Map Two Entries](11-whitelist-map-two-entries.png)
 ---
 
 # Experimental Validation
@@ -176,7 +196,9 @@ Result:
 4 packets received
 0% packet loss
 ```
+### Allowed Ping Result
 
+![Allowed Ping Success](12-ping-allowed-success.png)
 ### Observation
 
 The source address exists in the whitelist map.
@@ -229,7 +251,9 @@ Result:
 Destination unreachable
 100% packet loss
 ```
+### Blocked Ping Result
 
+![Blocked Ping](10-ping-blocked.png)
 ### Observation
 
 The address is not present in the whitelist map.
