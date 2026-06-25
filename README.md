@@ -173,6 +173,7 @@ sudo bpftool map dump id <MAP_ID>
 ### Whitelist Map Dump
 
 ![Whitelist Map Dump](09-whitelist-map-dump.png)
+
 Successful output shows both IPv6 addresses stored inside the whitelist map.
 ### Whitelist Map with Two Entries
 
